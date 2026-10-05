@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#c62828"/>
+  <!-- handle / lever -->
+  <path d="M206 92h92l52 -22v36l-52 -6h-30v24h-36z" fill="#fff"/>
+  <!-- hose -->
+  <path d="M206 132c-58 0-86 40-86 96v88" fill="none" stroke="#fff" stroke-width="20" stroke-linecap="round"/>
+  <!-- cylinder -->
+  <rect x="196" y="140" width="128" height="300" rx="56" fill="#fff"/>
+  <rect x="196" y="236" width="128" height="72" fill="#c62828" opacity=".18"/>
+  <!-- check mark -->
+  <path d="M226 270l24 24 46 -52" fill="none" stroke="#c62828" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

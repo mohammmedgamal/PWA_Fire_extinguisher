@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Fire Extinguisher Survey</title>
+  <meta name="description" content="Scan fire extinguisher QR labels, see the last check and record surveys.">
+  <meta name="theme-color" content="#c62828">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="FE Survey">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <button class="icon-btn" id="backBtn" hidden aria-label="Back">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+    </button>
+    <h1 id="title">Extinguishers</h1>
+    <button class="icon-btn" id="menuBtn" aria-label="Menu" aria-haspopup="true">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+    </button>
+  </header>
+
+  <div class="menu" id="menu" hidden>
+    <button data-action="export-csv">Export surveys (CSV)</button>
+    <button data-action="backup">Back up all data (JSON)</button>
+    <button data-action="restore">Restore from backup…</button>
+    <button data-action="operator">Change operator name</button>
+  </div>
+  <input type="file" id="restoreInput" accept="application/json,.json" hidden>
+
+  <main id="view" tabindex="-1"></main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <noscript><p class="pad">This app needs JavaScript enabled.</p></noscript>
+
+  <script src="vendor/jsQR.js" defer></script>
+  <script src="vendor/qrcode.js" defer></script>
+  <script src="app.js" defer></script>
+</body>
+</html>
