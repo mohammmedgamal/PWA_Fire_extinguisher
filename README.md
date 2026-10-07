@@ -33,12 +33,26 @@ Clearing the browser's site data deletes the records, so take backups regularly.
 The camera only works over **HTTPS** (or `http://localhost`). Any static host will do,
 for example GitHub Pages, Netlify or an internal IIS/nginx server. Upload the repository's files as they are.
 
-Local test:
+Local test (needs Node 18 or newer, no `npm install` required):
 
 ```sh
-npx http-server -p 8080 .
+npm start
 # open http://localhost:8080
 ```
+
+### Deploy on Railway
+
+The repo includes a dependency-free Node server (`server.js`) and a `railway.json`, so Railway can deploy it as it is:
+
+1. On [railway.com](https://railway.com), choose **New Project → Deploy from GitHub repo** and pick this repository
+   (in the service's **Settings → Source**, choose the branch to deploy).
+2. Railway detects Node and runs `node server.js`, which listens on the `PORT` Railway provides.
+3. In the service's **Settings → Networking**, click **Generate Domain** to get a public `https://…up.railway.app` address.
+   Railway provides HTTPS, so the camera works. A custom domain can be added in the same place.
+4. Open that address on the operators' phones and install the app.
+
+Each push to the deployed branch redeploys automatically.
+Make the QR labels from the final address: each label holds a link to the site it was printed from.
 
 To install, open the site on the phone, then choose *Install app* (Android/Chrome) or *Share → Add to Home Screen* (iOS/Safari).
 
@@ -53,6 +67,7 @@ Codes are not case-sensitive and are stored in upper case.
 | File | Purpose |
 | --- | --- |
 | `index.html`, `styles.css`, `app.js` | The app (plain HTML/CSS/JS, no framework) |
+| `server.js`, `package.json`, `railway.json` | Small static web server and Railway settings for hosting |
 | `sw.js` | Service worker that lets the app work offline |
 | `manifest.webmanifest`, `icons/` | Install metadata and icons (`node icons/render.mjs` regenerates the PNGs with Playwright) |
 | `vendor/jsQR.js` | QR decoding (jsQR 1.4.0, Apache-2.0). Used when the browser has no native `BarcodeDetector` |

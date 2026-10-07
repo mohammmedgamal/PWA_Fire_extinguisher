@@ -1,0 +1,13 @@
+{
+  "name": "fire-extinguisher-survey",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PWA for surveying fire extinguishers by QR code",
+  "license": "GPL-3.0-only",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
