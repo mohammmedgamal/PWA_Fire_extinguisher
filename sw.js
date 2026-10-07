@@ -1,11 +1,12 @@
 /* Service worker: caches the app shell so the app works offline in the plant. */
-const CACHE = 'fe-survey-v1';
+const CACHE = 'fe-survey-v2';
 const ASSETS = [
   './',
   'index.html',
   'styles.css',
   'app.js',
   'manifest.webmanifest',
+  'data/extinguishers.json',
   'vendor/jsQR.js',
   'vendor/qrcode.js',
   'icons/icon.svg',

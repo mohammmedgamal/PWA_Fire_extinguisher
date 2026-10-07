@@ -11,7 +11,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 // Only these files and folders are served; server code and repo files stay private.
 const PUBLIC = new Set(['index.html', 'styles.css', 'app.js', 'sw.js', 'manifest.webmanifest']);
-const PUBLIC_DIRS = new Set(['icons', 'vendor']);
+const PUBLIC_DIRS = new Set(['icons', 'vendor', 'data']);
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',

@@ -6,6 +6,8 @@
 const DUE_DAYS = 30;
 const OPERATOR_KEY = 'fe.operator';
 const FILTER_KEY = 'fe.filter';
+const UNIT_KEY = 'fe.unit';
+const SEED_KEY = 'fe.seedVersion';
 
 const ISSUES = [
   ['corroded', 'Corroded / rusted'],
@@ -24,8 +26,8 @@ const ISSUES = [
 ];
 const ISSUE_LABEL = Object.fromEntries(ISSUES);
 
-const TYPES = ['CO2', 'Dry powder (ABC)', 'Dry powder (BC)', 'Foam (AFFF)', 'Water', 'Wet chemical', 'Clean agent (FM-200)'];
-const CAPACITIES = ['2 kg', '5 kg', '6 kg', '9 kg', '12 kg', '25 kg', '50 kg', '6 L', '9 L', '45 L'];
+const TYPES = ['Ansul ABC/C', 'CO2', 'Wheeled Type', 'Dry powder (ABC)', 'Dry powder (BC)', 'Foam (AFFF)', 'Water', 'Wet chemical', 'Clean agent (FM-200)'];
+const CAPACITIES = ['10 LBS', '15 LBS', '17 LBS', '20 LBS', '25 LBS', '27 LBS', '30 LBS', '125 LBS', '150 LBS', '2 KG', '6 KG', '10 KG'];
 
 /* ---------------- helpers ---------------- */
 
@@ -89,14 +91,64 @@ function extHash(code, suffix = '') {
   return `#/ext/${encodeURIComponent(code)}${suffix}`;
 }
 
-/** Pull an extinguisher code out of scanned QR text (a plain code or a link to this app). */
-function codeFromScan(text) {
+/** Display title: imported extinguishers have no name, so fall back to the location. */
+function title(ext) {
+  return ext.name || ext.location || ext.code;
+}
+
+/** Normalised label text; must match label_key() in tools/import_register.py. */
+function labelKey(text) {
+  return String(text ?? '').replace(/\s+/g, ' ').trim().toUpperCase();
+}
+
+/** Read the plant's label format: "UNIT: …\nID NO: …\nLOCATION: …\nTYPE: …\nSIZE: …". */
+function parsePlantLabel(text) {
+  if (!/ID\s*NO\s*:/i.test(text)) return null;
+  const field = (name) => (text.match(new RegExp(`^\\s*${name}\\s*:[ \\t]*(.*)$`, 'im')) || [])[1]?.trim() ?? '';
+  return {
+    tag: normCode(field('ID\\s*NO')) || 'NO TAG',
+    unit: field('UNIT').replace(/\s+/g, ' '),
+    location: field('LOCATION').replace(/\s+/g, ' '),
+    type: field('TYPE').replace(/\s+/g, ' '),
+    capacity: field('SIZE').replace(/\s+/g, ' '),
+  };
+}
+
+/**
+ * Work out which extinguisher(s) scanned or typed text refers to. Accepts a link made by this app,
+ * the plant's multi-line label text, or a plain code / ID number.
+ * Returns { matches: [ext…], code, label } where label holds the parsed plant label fields, if any.
+ */
+async function resolveScan(text) {
   const raw = String(text ?? '').trim();
-  const m = raw.match(/#\/ext\/([^/?#]+)/);
-  if (m) {
-    try { return normCode(decodeURIComponent(m[1])); } catch { return normCode(m[1]); }
+  const link = raw.match(/#\/ext\/([^/?#]+)/);
+  if (link) {
+    let code;
+    try { code = normCode(decodeURIComponent(link[1])); } catch { code = normCode(link[1]); }
+    const ext = await DB.getExt(code);
+    return { matches: ext ? [ext] : [], code };
   }
-  return normCode(raw);
+  const all = await DB.allExt();
+  const label = parsePlantLabel(raw);
+  if (label) {
+    const key = labelKey(raw);
+    let matches = all.filter((e) => e.labelKey === key);
+    if (!matches.length) matches = all.filter((e) => (e.tag || e.code) === label.tag);
+    return { matches, code: label.tag, label, key };
+  }
+  const code = normCode(raw);
+  const exact = all.filter((e) => e.code === code);
+  return { matches: exact.length ? exact : all.filter((e) => e.tag === code), code };
+}
+
+let pendingScan = null; // carries a scan result to the picker / register views
+
+async function openScan(text) {
+  const res = await resolveScan(text);
+  if (!res.code) return;
+  if (res.matches.length === 1) { go(extHash(res.matches[0].code), true); return; }
+  pendingScan = res;
+  go(res.matches.length ? '#/pick' : extHash(res.code), true);
 }
 
 function labelUrl(code) {
@@ -181,6 +233,7 @@ let cleanup = null; // called when leaving a view (stops the camera etc.)
 const routes = [
   [/^#?\/?$/, () => viewHome()],
   [/^#\/scan$/, () => viewScan()],
+  [/^#\/pick$/, () => viewPick()],
   [/^#\/new(?:\?code=(.*))?$/, (m) => viewEditor(null, m[1] ? decodeURIComponent(m[1]) : '')],
   [/^#\/ext\/([^/]+)$/, (m) => viewExt(decodeURIComponent(m[1]))],
   [/^#\/ext\/([^/]+)\/survey$/, (m) => viewSurvey(decodeURIComponent(m[1]))],
@@ -219,18 +272,23 @@ function render(html) { $('#view').innerHTML = html; }
 async function viewHome() {
   setShell('Extinguishers', null);
   const items = await loadOverview();
-  const notOk = items.filter((i) => i.last && i.last.result === 'NOT_OK').length;
-  const due = items.filter((i) => i.due).length;
   let filter = storageGet(FILTER_KEY, 'all');
+  const units = [...new Set(items.map((i) => i.unit).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  let unit = storageGet(UNIT_KEY, '');
+  if (!units.includes(unit)) unit = '';
 
   render(`
     <section class="stats">
-      <button class="stat" data-filter="all"><span class="num">${items.length}</span><span>Total</span></button>
-      <button class="stat bad" data-filter="notok"><span class="num">${notOk}</span><span>Not OK</span></button>
-      <button class="stat warn" data-filter="due"><span class="num">${due}</span><span>Due (&gt;${DUE_DAYS} days)</span></button>
+      <button class="stat" data-filter="all"><span class="num" id="nTotal"></span><span>Total</span></button>
+      <button class="stat bad" data-filter="notok"><span class="num" id="nNotOk"></span><span>Not OK</span></button>
+      <button class="stat warn" data-filter="due"><span class="num" id="nDue"></span><span>Due (&gt;${DUE_DAYS} days)</span></button>
     </section>
     <div class="searchbar">
-      <input type="search" id="search" placeholder="Search name, code, location, type" aria-label="Search" autocomplete="off">
+      <input type="search" id="search" placeholder="Search ID, unit, location, type" aria-label="Search" autocomplete="off">
+      ${units.length ? `<select id="unitSel" aria-label="Unit">
+        <option value="">All units / areas</option>
+        ${units.map((u) => `<option value="${esc(u)}"${u === unit ? ' selected' : ''}>${esc(u)}</option>`).join('')}
+      </select>` : ''}
     </div>
     <div class="chips" role="tablist">
       ${[['all', 'All'], ['notok', 'Not OK'], ['due', 'Due'], ['ok', 'OK'], ['never', 'Never checked']]
@@ -249,18 +307,24 @@ async function viewHome() {
   `);
 
   const sortKey = (i) => (i.last && i.last.result === 'NOT_OK' ? 0 : i.due ? 1 : 2);
-  items.sort((a, b) => sortKey(a) - sortKey(b) || a.code.localeCompare(b.code, undefined, { numeric: true }));
+  // Within each status group keep the register's order (the walking route); hand-added ones go last.
+  const order = (i) => i.order ?? Infinity;
+  items.sort((a, b) => sortKey(a) - sortKey(b) || order(a) - order(b) || a.code.localeCompare(b.code, undefined, { numeric: true }));
 
   const draw = () => {
     const q = $('#search').value.trim().toLowerCase();
+    const inUnit = unit ? items.filter((i) => i.unit === unit) : items;
+    $('#nTotal').textContent = inUnit.length;
+    $('#nNotOk').textContent = inUnit.filter((i) => i.last && i.last.result === 'NOT_OK').length;
+    $('#nDue').textContent = inUnit.filter((i) => i.due).length;
     $$('[data-filter]').forEach((b) => b.classList.toggle('active', b.dataset.filter === filter));
-    const shown = items.filter((i) => {
+    const shown = inUnit.filter((i) => {
       if (filter === 'notok' && !(i.last && i.last.result === 'NOT_OK')) return false;
       if (filter === 'due' && !i.due) return false;
       if (filter === 'ok' && !(i.last && i.last.result === 'OK')) return false;
       if (filter === 'never' && i.last) return false;
       if (!q) return true;
-      return [i.name, i.code, i.location, i.type, i.capacity].some((f) => String(f || '').toLowerCase().includes(q));
+      return [i.name, i.code, i.tag, i.unit, i.location, i.type, i.capacity].some((f) => String(f || '').toLowerCase().includes(q));
     });
     const list = $('#list');
     if (!items.length) {
@@ -275,8 +339,8 @@ async function viewHome() {
     list.innerHTML = shown.map((i) => `
       <li><a class="row" href="${extHash(i.code)}">
         <div class="row-main">
-          <div class="row-title">${esc(i.name)}</div>
-          <div class="row-sub">${esc(i.code)}${i.location ? ' · ' + esc(i.location) : ''}</div>
+          <div class="row-title">${esc(title(i))}</div>
+          <div class="row-sub">${esc(subtitle(i))}</div>
           <div class="row-sub">${i.last ? `Checked ${esc(relDays(i.last.date))}${i.last.operator ? ' by ' + esc(i.last.operator) : ''}` : 'Never checked'}</div>
         </div>
         <div class="row-badges">
@@ -291,8 +355,19 @@ async function viewHome() {
     storageSet(FILTER_KEY, filter);
     draw();
   }));
+  $('#unitSel')?.addEventListener('change', (e) => {
+    unit = e.target.value;
+    storageSet(UNIT_KEY, unit);
+    draw();
+  });
   $('#search').addEventListener('input', draw);
   draw();
+}
+
+/** Second line under the title: code, plus whatever of unit/location the title doesn't already show. */
+function subtitle(ext) {
+  const t = title(ext);
+  return [ext.code, ext.unit, ext.location].filter((v, i) => v && (i === 0 || v !== t)).join(' · ');
 }
 
 function statusBadge(last) {
@@ -338,9 +413,9 @@ async function viewScan() {
       </div>
     </section>
     <form class="card manual" id="manualForm">
-      <label for="manualCode">Label damaged? Type the code</label>
+      <label for="manualCode">Label damaged? Type the ID number</label>
       <div class="inline">
-        <input id="manualCode" placeholder="e.g. FE-012" autocomplete="off" autocapitalize="characters" required>
+        <input id="manualCode" placeholder="ID number, e.g. GPP1-01-012" autocomplete="off" autocapitalize="characters" required>
         <button class="btn primary" type="submit">Open</button>
       </div>
     </form>
@@ -348,8 +423,8 @@ async function viewScan() {
 
   $('#manualForm').addEventListener('submit', (e) => {
     e.preventDefault();
-    const code = normCode($('#manualCode').value);
-    if (code) go(extHash(code), true);
+    const text = $('#manualCode').value.trim();
+    if (text) openScan(text);
   });
 
   const video = $('#video');
@@ -414,11 +489,10 @@ async function viewScan() {
   let lastRun = 0;
 
   const found = (text) => {
-    const code = codeFromScan(text);
-    if (!code) return;
+    if (!String(text).trim()) return;
     cleanup();
     if (navigator.vibrate) navigator.vibrate(80);
-    go(extHash(code), true);
+    openScan(text);
   };
 
   const tick = async (t) => {
@@ -455,7 +529,7 @@ async function viewExt(rawCode) {
   const code = normCode(rawCode);
   const ext = await DB.getExt(code);
   if (!ext) return viewUnknown(code);
-  setShell(ext.name, '#/');
+  setShell(title(ext), '#/');
   const surveys = await DB.surveysFor(code);
   const last = surveys[0];
   const age = last ? daysSince(last.date) : null;
@@ -467,12 +541,14 @@ async function viewExt(rawCode) {
   render(`
     ${warning}
     <section class="card">
-      <h2 class="ext-name">${esc(ext.name)}</h2>
+      <h2 class="ext-name">${esc(title(ext))}</h2>
       <dl class="facts">
-        <dt>Code</dt><dd class="mono">${esc(ext.code)}</dd>
+        <dt>ID No</dt><dd class="mono">${esc(ext.tag || ext.code)}</dd>
+        ${ext.tag && ext.tag !== ext.code ? `<dt>App code</dt><dd class="mono">${esc(ext.code)}</dd>` : ''}
+        <dt>Unit</dt><dd>${esc(ext.unit) || '—'}</dd>
         <dt>Location</dt><dd>${esc(ext.location) || '—'}</dd>
         <dt>Type</dt><dd>${esc(ext.type) || '—'}</dd>
-        <dt>Capacity</dt><dd>${esc(ext.capacity) || '—'}</dd>
+        <dt>Size</dt><dd>${esc(ext.capacity) || '—'}</dd>
         ${ext.notes ? `<dt>Notes</dt><dd>${esc(ext.notes)}</dd>` : ''}
       </dl>
     </section>
@@ -521,13 +597,32 @@ function surveyBlock(s, large) {
 
 function viewUnknown(code) {
   setShell('Unknown code', '#/');
+  const label = pendingScan && pendingScan.code === code ? pendingScan.label : null;
   render(`
     <section class="card center">
       <p class="big-code mono">${esc(code)}</p>
-      <p>This code is not registered in the app yet.</p>
+      ${label ? `<p class="muted">${esc([label.unit, label.location, label.type, label.capacity].filter(Boolean).join(' · '))}</p>` : ''}
+      <p>This extinguisher is not registered in the app yet.</p>
       <a class="btn primary big block" href="#/new?code=${encodeURIComponent(code)}">Register this extinguisher</a>
       <a class="btn ghost block" href="#/scan">Scan again</a>
     </section>
+  `);
+}
+
+/** More than one extinguisher shares the scanned ID / label text: let the operator choose. */
+function viewPick() {
+  const res = pendingScan;
+  if (!res || !res.matches?.length) { go('#/', true); return; }
+  setShell('Which extinguisher?', '#/scan');
+  render(`
+    <div class="alert warn">${res.matches.length} extinguishers share ID ${esc(res.code)}. Choose the one in front of you.</div>
+    <ul class="list">
+      ${res.matches.map((e) => `<li><a class="row" href="${extHash(e.code)}">
+        <div class="row-main">
+          <div class="row-title">${esc(e.unit ? `${e.unit} — ${e.location || ''}` : title(e))}</div>
+          <div class="row-sub">${esc([e.code, e.type, e.capacity].filter(Boolean).join(' · '))}</div>
+        </div></a></li>`).join('')}
+    </ul>
   `);
 }
 
@@ -541,8 +636,8 @@ async function viewSurvey(rawCode) {
 
   render(`
     <section class="card compact">
-      <div class="row-title">${esc(ext.name)}</div>
-      <div class="row-sub">${esc(ext.code)}${ext.location ? ' · ' + esc(ext.location) : ''}</div>
+      <div class="row-title">${esc(title(ext))}</div>
+      <div class="row-sub">${esc(subtitle(ext))}</div>
     </section>
     <form id="surveyForm" class="card" novalidate>
       <fieldset>
@@ -616,18 +711,25 @@ async function viewEditor(rawCode, prefill = '') {
   const ext = editing ? await DB.getExt(code) : null;
   if (editing && !ext) return viewUnknown(code);
   setShell(editing ? 'Edit extinguisher' : 'Add extinguisher', editing ? extHash(code) : '#/');
-  const v = ext || { code, name: '', location: '', type: '', capacity: '', notes: '' };
+  // A scanned plant label that isn't registered yet pre-fills the form.
+  const scanned = !editing && pendingScan && pendingScan.code === code ? pendingScan : null;
+  const label = scanned?.label || {};
+  const v = ext || { code, name: '', unit: label.unit || '', location: label.location || '', type: label.type || '', capacity: label.capacity || '', notes: '' };
 
   render(`
     <form id="extForm" class="card" novalidate>
-      <label for="fCode">Code (printed on / encoded in the QR label) <span class="req">*</span></label>
-      <input id="fCode" class="mono" value="${esc(v.code)}" ${editing ? 'readonly' : ''} required autocomplete="off" autocapitalize="characters" placeholder="e.g. FE-012">
+      <label for="fCode">ID number (as on the label) <span class="req">*</span></label>
+      <input id="fCode" class="mono" value="${esc(v.code)}" ${editing ? 'readonly' : ''} required autocomplete="off" autocapitalize="characters" placeholder="e.g. GPP1-01-012">
 
-      <label for="fName">Name <span class="req">*</span></label>
-      <input id="fName" value="${esc(v.name)}" required placeholder="e.g. Turbine Hall North">
+      <label for="fName">Name <span class="muted">(optional)</span></label>
+      <input id="fName" value="${esc(v.name)}" placeholder="Shown instead of the location, e.g. Turbine Hall North">
+
+      <label for="fUnit">Unit / area</label>
+      <input id="fUnit" list="unitList" value="${esc(v.unit)}" placeholder="e.g. Unit 2">
+      <datalist id="unitList"></datalist>
 
       <label for="fLocation">Location</label>
-      <input id="fLocation" value="${esc(v.location)}" placeholder="e.g. Unit 2, level 3, column B4">
+      <input id="fLocation" value="${esc(v.location)}" placeholder="e.g. Unit 2 - Level 3">
 
       <div class="two">
         <div>
@@ -635,8 +737,8 @@ async function viewEditor(rawCode, prefill = '') {
           <input id="fType" list="typeList" value="${esc(v.type)}" placeholder="e.g. CO2">
         </div>
         <div>
-          <label for="fCapacity">Capacity</label>
-          <input id="fCapacity" list="capList" value="${esc(v.capacity)}" placeholder="e.g. 6 kg">
+          <label for="fCapacity">Size</label>
+          <input id="fCapacity" list="capList" value="${esc(v.capacity)}" placeholder="e.g. 25 LBS">
         </div>
       </div>
       <datalist id="typeList">${TYPES.map((t) => `<option value="${esc(t)}">`).join('')}</datalist>
@@ -650,36 +752,46 @@ async function viewEditor(rawCode, prefill = '') {
       ${editing ? '<button class="btn danger block" type="button" id="deleteBtn">Delete extinguisher</button>' : ''}
     </form>
   `);
-  if (!editing) $(code ? '#fName' : '#fCode').focus();
+  if (!editing) $(code ? '#fUnit' : '#fCode').focus();
+  DB.allExt().then((all) => {
+    const units = [...new Set(all.map((e) => e.unit).filter(Boolean))].sort();
+    $('#unitList').innerHTML = units.map((u) => `<option value="${esc(u)}">`).join('');
+  });
 
   $('#extForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const err = $('#formError');
     const newCode = normCode($('#fCode').value);
     const name = $('#fName').value.trim();
+    const location = $('#fLocation').value.trim();
     let problem = '';
-    if (!newCode) problem = 'Enter the code.';
-    else if (!name) problem = 'Enter a name.';
-    else if (!editing && await DB.getExt(newCode)) problem = `Code ${newCode} is already registered.`;
+    if (!newCode) problem = 'Enter the ID number.';
+    else if (!name && !location) problem = 'Enter a location (or a name).';
+    else if (!editing && await DB.getExt(newCode)) problem = `${newCode} is already registered.`;
     if (problem) { err.textContent = problem; err.hidden = false; return; }
 
     await DB.putExt({
+      ...ext,
       code: newCode,
+      tag: ext?.tag || newCode,
+      labelKey: ext?.labelKey || (scanned?.label ? scanned.key : ''),
       name,
-      location: $('#fLocation').value.trim(),
+      unit: $('#fUnit').value.trim(),
+      location,
       type: $('#fType').value.trim(),
       capacity: $('#fCapacity').value.trim(),
       notes: $('#fNotes').value.trim(),
       createdAt: ext?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
+    pendingScan = null;
     toast(editing ? 'Changes saved' : 'Extinguisher added');
     go(extHash(newCode), true);
   });
 
   if (editing) {
     $('#deleteBtn').addEventListener('click', async () => {
-      if (!confirm(`Delete ${ext.name} (${ext.code}) and all of its survey history?`)) return;
+      if (!confirm(`Delete ${title(ext)} (${ext.code}) and all of its survey history?`)) return;
       await DB.deleteExt(code);
       toast('Extinguisher deleted');
       go('#/', true);
@@ -730,9 +842,9 @@ function drawLabel(ext) {
   };
   g.fillStyle = '#000';
   fit(ext.code, 'ui-monospace, Menlo, Consolas, monospace', 56, textTop + 40, 'bold');
-  fit(ext.name, 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', 38, textTop + 105, 'bold');
+  fit(title(ext), 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', 38, textTop + 105, 'bold');
   g.fillStyle = '#333';
-  fit(ext.location || '', 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', 30, textTop + 160);
+  fit([ext.unit, ext.location].filter((v) => v && v !== title(ext)).join(' · '), 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', 30, textTop + 160);
   return c;
 }
 
@@ -755,7 +867,7 @@ async function viewLabel(rawCode) {
   const dataUrl = canvas.toDataURL('image/png');
   render(`
     <section class="label-wrap">
-      <img id="labelImg" class="label-img" src="${dataUrl}" alt="QR label for ${esc(ext.name)} (${esc(ext.code)})">
+      <img id="labelImg" class="label-img" src="${dataUrl}" alt="QR label for ${esc(title(ext))} (${esc(ext.code)})">
     </section>
     <div class="btn-row three">
       <button class="btn primary" id="shareBtn">Share</button>
@@ -838,11 +950,11 @@ async function exportCsv() {
   if (!surveys.length) { toast('There are no surveys to export yet'); return; }
   const byCode = Object.fromEntries(exts.map((e) => [e.code, e]));
   surveys.sort((a, b) => b.date.localeCompare(a.date));
-  const header = ['Date', 'Time', 'Code', 'Name', 'Location', 'Type', 'Capacity', 'Result', 'Problems', 'Other problem', 'Notes', 'Operator'];
+  const header = ['Date', 'Time', 'ID No', 'App code', 'Name', 'Unit', 'Location', 'Type', 'Size', 'Result', 'Problems', 'Other problem', 'Notes', 'Operator'];
   const rows = surveys.map((s) => {
     const e = byCode[s.code] || {};
     const d = new Date(s.date);
-    return [localDate(d), localTime(d), s.code, e.name, e.location, e.type, e.capacity,
+    return [localDate(d), localTime(d), e.tag || s.code, s.code, e.name, e.unit, e.location, e.type, e.capacity,
       s.result === 'OK' ? 'OK' : 'NOT OK',
       (s.issues || []).map((k) => ISSUE_LABEL[k] || k).join('; '),
       s.otherNote, s.notes, s.operator];
@@ -863,7 +975,7 @@ async function restore(file) {
   try {
     const data = JSON.parse(await file.text());
     if (data.app !== 'fe-survey' || !Array.isArray(data.extinguishers) || !Array.isArray(data.surveys)) throw new Error('Not a backup from this app');
-    const exts = data.extinguishers.filter((e) => e && e.code && e.name).map((e) => ({ ...e, code: normCode(e.code) }));
+    const exts = data.extinguishers.filter((e) => e && e.code && (e.name || e.location)).map((e) => ({ ...e, code: normCode(e.code) }));
     const surveys = data.surveys.filter((s) => s && s.id && s.code && s.date && s.result).map((s) => ({ ...s, code: normCode(s.code) }));
     if (!confirm(`Merge ${exts.length} extinguishers and ${surveys.length} surveys into this device? Matching records will be overwritten.`)) return;
     await DB.importAll(exts, surveys);
@@ -902,9 +1014,37 @@ function initMenu() {
 
 /* ---------------- start ---------------- */
 
+/**
+ * Load the plant's extinguisher register (data/extinguishers.json) into this device's database.
+ * Runs once per register version. It only adds extinguishers that are missing, so it never
+ * overwrites edits made in the app or touches survey history.
+ */
+async function seedRegister() {
+  try {
+    const res = await fetch('data/extinguishers.json', { cache: 'no-cache' });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.version || storageGet(SEED_KEY) === data.version) return;
+    const byCode = new Map((await DB.allExt()).map((e) => [e.code, e]));
+    const now = new Date().toISOString();
+    const put = [];
+    for (const e of data.extinguishers) {
+      const cur = byCode.get(e.code);
+      if (!cur) put.push({ ...e, createdAt: now });
+      else if (!cur.labelKey || cur.order == null) {
+        put.push({ ...cur, tag: cur.tag || e.tag, unit: cur.unit || e.unit, labelKey: cur.labelKey || e.labelKey, order: e.order });
+      }
+    }
+    if (put.length) await DB.importAll(put, []);
+    storageSet(SEED_KEY, data.version);
+  } catch (err) {
+    console.warn('Could not load the extinguisher register', err);
+  }
+}
+
 initMenu();
 window.addEventListener('hashchange', router);
-router();
+seedRegister().finally(router);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch((err) => console.warn('Service worker failed', err));
