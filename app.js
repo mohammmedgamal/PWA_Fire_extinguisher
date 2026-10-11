@@ -1047,5 +1047,13 @@ window.addEventListener('hashchange', router);
 seedRegister().finally(router);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('sw.js').catch((err) => console.warn('Service worker failed', err));
+  // When a new version takes over an already-open page, reload once so it runs the new code.
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController && !reloaded) { reloaded = true; location.reload(); }
+  });
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+    .then((reg) => reg.update())
+    .catch((err) => console.warn('Service worker failed', err));
 }
