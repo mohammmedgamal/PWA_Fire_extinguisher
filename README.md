@@ -22,6 +22,35 @@ It works offline and installs to the phone's home screen. There is no server and
 - **CSV export**: menu ⋮ → *Export surveys (CSV)*. The file opens in Excel (UTF-8 with BOM) or can be sent by email from the share sheet.
 - **Backup / restore**: menu ⋮ → JSON backup. Restoring *merges* the backup into the device, so data from several phones can be combined.
 
+## Extinguisher register
+
+The app comes with the plant's register of **454 extinguishers** (from the *QR REGISTER* sheet), stored in
+`data/extinguishers.json`. Each phone loads it into its own database the first time the app opens.
+Loading only *adds* missing extinguishers, so edits and survey history on the phone are never overwritten.
+
+The existing QR labels hold text like this, and the app reads them directly:
+
+```
+UNIT: Unit 1
+ID NO: GPP1-01-001
+LOCATION: Unit 1 - GFL
+TYPE: Ansul ABC/C
+SIZE: 25 LBS
+```
+
+Some ID numbers are used on more than one extinguisher, and 12 labels say `NO TAG`. Those get an app code with a suffix,
+such as `GPP1-01-069 #2` or `NO TAG #5`. The app picks the right one by matching the whole label (unit, location, type and size).
+If a label still matches more than one extinguisher, the app lists them so the operator can choose.
+Typing an ID number by hand works the same way.
+
+To update the register after the spreadsheet changes:
+
+```sh
+python3 tools/import_register.py Fire_Extinguishers_QR.xlsx > data/extinguishers.json
+```
+
+Then bump `CACHE` in `sw.js` and deploy. Phones add the new extinguishers the next time they open the app online.
+
 ## Data storage
 
 All data is kept **on the device**, in the browser's IndexedDB storage. Each phone has its own data.
@@ -33,12 +62,26 @@ Clearing the browser's site data deletes the records, so take backups regularly.
 The camera only works over **HTTPS** (or `http://localhost`). Any static host will do,
 for example GitHub Pages, Netlify or an internal IIS/nginx server. Upload the repository's files as they are.
 
-Local test:
+Local test (needs Node 18 or newer, no `npm install` required):
 
 ```sh
-npx http-server -p 8080 .
+npm start
 # open http://localhost:8080
 ```
+
+### Deploy on Railway
+
+The repo includes a dependency-free Node server (`server.js`) and a `railway.json`, so Railway can deploy it as it is:
+
+1. On [railway.com](https://railway.com), choose **New Project → Deploy from GitHub repo** and pick this repository
+   (in the service's **Settings → Source**, choose the branch to deploy).
+2. Railway detects Node and runs `node server.js`, which listens on the `PORT` Railway provides.
+3. In the service's **Settings → Networking**, click **Generate Domain** to get a public `https://…up.railway.app` address.
+   Railway provides HTTPS, so the camera works. A custom domain can be added in the same place.
+4. Open that address on the operators' phones and install the app.
+
+Each push to the deployed branch redeploys automatically.
+Make the QR labels from the final address: each label holds a link to the site it was printed from.
 
 To install, open the site on the phone, then choose *Install app* (Android/Chrome) or *Share → Add to Home Screen* (iOS/Safari).
 
@@ -53,6 +96,8 @@ Codes are not case-sensitive and are stored in upper case.
 | File | Purpose |
 | --- | --- |
 | `index.html`, `styles.css`, `app.js` | The app (plain HTML/CSS/JS, no framework) |
+| `server.js`, `package.json`, `railway.json` | Small static web server and Railway settings for hosting |
+| `data/extinguishers.json`, `tools/import_register.py` | The extinguisher register and the script that builds it from the Excel file |
 | `sw.js` | Service worker that lets the app work offline |
 | `manifest.webmanifest`, `icons/` | Install metadata and icons (`node icons/render.mjs` regenerates the PNGs with Playwright) |
 | `vendor/jsQR.js` | QR decoding (jsQR 1.4.0, Apache-2.0). Used when the browser has no native `BarcodeDetector` |
