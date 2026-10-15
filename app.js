@@ -592,6 +592,8 @@ function surveyBlock(s, large) {
       <div class="muted">By ${esc(s.operator || 'unknown')} · ${esc(relDays(s.date))}</div>
       ${issues.length ? `<ul class="issues">${issues.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>` : ''}
       ${s.notes ? `<p class="notes">${esc(s.notes)}</p>` : ''}
+      ${s.geo ? `<div class="geo"><a href="${esc(mapLink(s.geo))}" target="_blank" rel="noopener">📍 ${s.geo.lat.toFixed(5)}, ${s.geo.lng.toFixed(5)}</a> <span class="muted">±${esc(s.geo.accuracy)} m</span></div>`
+        : s.geoError ? `<div class="geo muted">📍 No location: ${esc(GEO_REASON[s.geoError] || s.geoError)}</div>` : ''}
     </div>`;
 }
 
@@ -624,6 +626,75 @@ function viewPick() {
         </div></a></li>`).join('')}
     </ul>
   `);
+}
+
+/* ---------------- location stamp ---------------- */
+
+const GEO_WAIT_MS = 10000; // how long Save waits for a first position fix
+const GEO_REASON = {
+  denied: 'location permission denied',
+  unavailable: 'position unavailable (no GPS signal)',
+  timeout: 'no GPS fix in time',
+  unsupported: 'not supported on this device',
+};
+
+/**
+ * Starts the GPS as soon as the survey form opens and keeps the most accurate fix.
+ * get() resolves with { geo } or { geoError } once a fix exists, an error occurs, or the wait runs out.
+ */
+function startGeo(onStatus) {
+  let best = null;
+  let error = navigator.geolocation ? '' : 'unsupported';
+  const waiters = [];
+  const settle = () => { while (waiters.length) waiters.shift()(); };
+  let watchId = null;
+  if (!error) {
+    watchId = navigator.geolocation.watchPosition((pos) => {
+      const c = pos.coords;
+      if (!best || c.accuracy <= best.accuracy) {
+        best = {
+          lat: +c.latitude.toFixed(7),
+          lng: +c.longitude.toFixed(7),
+          accuracy: Math.round(c.accuracy),
+          altitude: c.altitude == null ? null : Math.round(c.altitude),
+          at: new Date(pos.timestamp).toISOString(),
+        };
+      }
+      error = '';
+      onStatus(best, '');
+      settle();
+    }, (err) => {
+      error = err.code === 1 ? 'denied' : err.code === 3 ? 'timeout' : 'unavailable';
+      if (!best) onStatus(null, error);
+      if (err.code === 1) settle();
+    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+  }
+  onStatus(null, error);
+  return {
+    get() {
+      if (best || error === 'denied' || error === 'unsupported') return Promise.resolve(result());
+      return new Promise((resolve) => {
+        const t = setTimeout(() => resolve(result(true)), GEO_WAIT_MS);
+        waiters.push(() => { clearTimeout(t); resolve(result()); });
+      });
+    },
+    stop() { if (watchId != null) navigator.geolocation.clearWatch(watchId); },
+  };
+  function result(timedOut) {
+    return best ? { geo: best } : { geoError: error || (timedOut ? 'timeout' : 'unavailable') };
+  }
+}
+
+function geoStatusHtml(geo, error) {
+  if (geo) return `📍 Location found <strong>±${geo.accuracy} m</strong> <span class="muted">(${geo.lat.toFixed(5)}, ${geo.lng.toFixed(5)})</span>`;
+  if (error === 'denied') return '⚠️ Location permission denied. Allow location for this site in the browser settings so surveys are stamped with GPS.';
+  if (error === 'unsupported') return '⚠️ This device cannot provide a location.';
+  if (error) return '📍 Searching for GPS… (weak signal indoors — the survey can still be saved)';
+  return '📍 Getting location…';
+}
+
+function mapLink(geo) {
+  return `https://www.google.com/maps?q=${geo.lat},${geo.lng}`;
 }
 
 /* ---------------- survey form ---------------- */
@@ -665,12 +736,15 @@ async function viewSurvey(rawCode) {
       <label for="operator">Operator name <span class="req">*</span></label>
       <input id="operator" autocomplete="name" required value="${esc(storageGet(OPERATOR_KEY))}">
 
+      <p class="geo-status" id="geoStatus" aria-live="polite"></p>
       <p class="error" id="formError" role="alert" hidden></p>
-      <button class="btn primary big block" type="submit">Save survey</button>
+      <button class="btn primary big block" type="submit" id="saveBtn">Save survey</button>
     </form>
   `);
 
   const form = $('#surveyForm');
+  const geo = startGeo((g, error) => { const el = $('#geoStatus'); if (el) el.innerHTML = geoStatusHtml(g, error); });
+  cleanup = () => geo.stop();
   const syncVisibility = () => {
     const result = form.result.value;
     $('#issuesSet').hidden = result !== 'NOT_OK';
@@ -692,13 +766,22 @@ async function viewSurvey(rawCode) {
     else if (!operator) problem = 'Enter your name.';
     if (problem) { err.textContent = problem; err.hidden = false; err.scrollIntoView({ block: 'center' }); return; }
 
+    // Time stamp is taken when the operator presses Save; the location is the best GPS fix so far
+    // (Save waits up to GEO_WAIT_MS for a first fix, then saves without one and records why).
+    const date = new Date().toISOString();
+    const saveBtn = $('#saveBtn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Getting location…';
+    const place = await geo.get();
+    geo.stop();
     await DB.putSurvey({
-      id: uid(), code, date: new Date().toISOString(), operator, result, issues, otherNote,
+      id: uid(), code, date, operator, result, issues, otherNote,
       notes: $('#notes').value.trim(),
+      ...place,
     });
     storageSet(OPERATOR_KEY, operator);
     if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
-    toast('Survey saved');
+    toast(place.geo ? `Survey saved with location (±${place.geo.accuracy} m)` : 'Survey saved — no location available');
     go(extHash(code), true);
   });
 }
@@ -950,14 +1033,17 @@ async function exportCsv() {
   if (!surveys.length) { toast('There are no surveys to export yet'); return; }
   const byCode = Object.fromEntries(exts.map((e) => [e.code, e]));
   surveys.sort((a, b) => b.date.localeCompare(a.date));
-  const header = ['Date', 'Time', 'ID No', 'App code', 'Name', 'Unit', 'Location', 'Type', 'Size', 'Result', 'Problems', 'Other problem', 'Notes', 'Operator'];
+  const header = ['Date', 'Time', 'ID No', 'App code', 'Name', 'Unit', 'Location', 'Type', 'Size', 'Result', 'Problems', 'Other problem', 'Notes', 'Operator',
+    'Timestamp (UTC)', 'Latitude', 'Longitude', 'GPS accuracy (m)', 'GPS fix time (UTC)', 'Location note'];
   const rows = surveys.map((s) => {
     const e = byCode[s.code] || {};
     const d = new Date(s.date);
     return [localDate(d), localTime(d), e.tag || s.code, s.code, e.name, e.unit, e.location, e.type, e.capacity,
       s.result === 'OK' ? 'OK' : 'NOT OK',
       (s.issues || []).map((k) => ISSUE_LABEL[k] || k).join('; '),
-      s.otherNote, s.notes, s.operator];
+      s.otherNote, s.notes, s.operator,
+      s.date, s.geo?.lat ?? '', s.geo?.lng ?? '', s.geo?.accuracy ?? '', s.geo?.at ?? '',
+      s.geo ? '' : GEO_REASON[s.geoError] || (s.geoError ?? 'not recorded')];
   });
   const csv = '﻿' + [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n') + '\r\n';
   const blob = new Blob([csv], { type: 'text/csv' });

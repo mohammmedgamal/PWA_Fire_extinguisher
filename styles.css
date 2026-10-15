@@ -268,3 +268,8 @@ select {
   background: var(--card); border: 2px solid var(--line); border-radius: 12px;
 }
 @media (min-width: 560px) { .searchbar { flex-direction: row; } .searchbar select { max-width: 240px; } }
+
+/* GPS stamp */
+.geo-status { margin: 16px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--bg); font-size: .9rem; }
+.geo { margin-top: 6px; font-size: .9rem; }
+.geo a { color: var(--brand); font-weight: 600; }
