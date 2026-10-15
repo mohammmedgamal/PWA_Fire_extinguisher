@@ -59,7 +59,7 @@ const server = http.createServer((req, res) => {
       'Cache-Control': 'no-cache',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'same-origin',
-      'Permissions-Policy': 'camera=(self)',
+      'Permissions-Policy': 'camera=(self), geolocation=(self)',
     });
     if (req.method === 'HEAD') res.end();
     else fs.createReadStream(file).pipe(res);

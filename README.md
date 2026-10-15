@@ -16,6 +16,10 @@ It works offline and installs to the phone's home screen. There is no server and
   corroded / rusted, damaged / dented, needs casing / cabinet, low pressure, safety pin or seal missing, hose or nozzle damaged,
   label unreadable, access blocked, needs refill, service overdue, bracket damaged, missing from location, or other (a note is required).
   Notes can be added, and the operator's name is remembered for next time.
+- **Time and location stamp**: every survey is saved with the exact time *Save* was pressed and the phone's GPS position
+  (latitude, longitude and accuracy in metres). The GPS starts when the survey form opens. If there is no fix yet, *Save* waits
+  up to 10 seconds. If there is still no fix (weak signal indoors, or location permission denied), the survey is saved anyway,
+  with the reason recorded. The position is shown in the history with a map link, and it is included in the CSV export.
 - **Home screen**: lists every extinguisher with its last result, shows how many are **Not OK** and how many are **Due**, and has search and filters.
 - **Adding extinguishers**: scanning a code the app doesn't know offers to register it, and the **+** button adds one by hand.
 - **QR labels**: the app can make a printable label (QR code plus name, code and location). The label can be shared, downloaded or printed.
