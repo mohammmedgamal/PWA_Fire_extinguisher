@@ -145,7 +145,8 @@ label { display: block; font-weight: 600; margin: 14px 0 6px; }
   display: flex; gap: 12px; align-items: center; padding: 14px 16px; text-decoration: none;
   background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
 }
-.row:active { opacity: .7; }
+button.row { width: 100%; border: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+a.row:active, button.row:active { opacity: .7; }
 .row-main { flex: 1; min-width: 0; }
 .row-title { font-weight: 700; font-size: 1.05rem; }
 .row-sub { color: var(--muted); font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

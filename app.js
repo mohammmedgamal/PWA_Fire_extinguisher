@@ -143,10 +143,26 @@ async function resolveScan(text) {
 
 let pendingScan = null; // carries a scan result to the picker / register views
 
+/*
+ * Surveys can only be recorded after scanning the extinguisher's QR label with the camera.
+ * A scan grants a short-lived pass for that one extinguisher. It lives only in memory, so
+ * typing a link, opening the app fresh or reloading the page never allows a survey.
+ */
+const SCAN_PASS_MS = 15 * 60 * 1000;
+let scanPass = null;
+
+function grantPass(code) { scanPass = { code, at: Date.now() }; }
+function hasPass(code) { return !!scanPass && scanPass.code === code && Date.now() - scanPass.at < SCAN_PASS_MS; }
+
+/** Called only by the camera scanner with the decoded QR text. */
 async function openScan(text) {
   const res = await resolveScan(text);
   if (!res.code) return;
-  if (res.matches.length === 1) { go(extHash(res.matches[0].code), true); return; }
+  if (res.matches.length === 1) {
+    grantPass(res.matches[0].code);
+    go(extHash(res.matches[0].code, '/survey'), true);
+    return;
+  }
   pendingScan = res;
   go(res.matches.length ? '#/pick' : extHash(res.code), true);
 }
@@ -337,7 +353,7 @@ async function viewHome() {
     }
     if (!shown.length) { list.innerHTML = '<li class="empty">No extinguishers match.</li>'; return; }
     list.innerHTML = shown.map((i) => `
-      <li><a class="row" href="${extHash(i.code)}">
+      <li><div class="row">
         <div class="row-main">
           <div class="row-title">${esc(title(i))}</div>
           <div class="row-sub">${esc(subtitle(i))}</div>
@@ -347,7 +363,7 @@ async function viewHome() {
           ${statusBadge(i.last)}
           ${i.due ? '<span class="badge warn">Due</span>' : ''}
         </div>
-      </a></li>`).join('');
+      </div></li>`).join('');
   };
 
   $$('[data-filter]').forEach((b) => b.addEventListener('click', () => {
@@ -412,20 +428,9 @@ async function viewScan() {
         </button>
       </div>
     </section>
-    <form class="card manual" id="manualForm">
-      <label for="manualCode">Label damaged? Type the ID number</label>
-      <div class="inline">
-        <input id="manualCode" placeholder="ID number, e.g. GPP1-01-012" autocomplete="off" autocapitalize="characters" required>
-        <button class="btn primary" type="submit">Open</button>
-      </div>
-    </form>
+    <p class="muted small pad">Surveys can only be recorded by scanning the extinguisher's QR label.
+      If the label is damaged or unreadable, report it to your supervisor so it can be replaced.</p>
   `);
-
-  $('#manualForm').addEventListener('submit', (e) => {
-    e.preventDefault();
-    const text = $('#manualCode').value.trim();
-    if (text) openScan(text);
-  });
 
   const video = $('#video');
   const msg = $('#scanMsg');
@@ -441,8 +446,8 @@ async function viewScan() {
 
   if (!navigator.mediaDevices?.getUserMedia) {
     msg.textContent = window.isSecureContext
-      ? 'Camera is not available in this browser. Type the code below.'
-      : 'Camera needs a secure (https) connection. Type the code below.';
+      ? 'Camera is not available in this browser. Surveys need the camera to scan the QR label.'
+      : 'Camera needs a secure (https) connection.';
     return;
   }
   try {
@@ -452,8 +457,8 @@ async function viewScan() {
     });
   } catch (err) {
     msg.textContent = err.name === 'NotAllowedError'
-      ? 'Camera permission was denied. Allow it in the browser settings, or type the code below.'
-      : 'Could not start the camera. Type the code below.';
+      ? 'Camera permission was denied. Allow the camera for this site in the browser settings to scan labels.'
+      : 'Could not start the camera.';
     return;
   }
   if (stopped) { stream.getTracks().forEach((t) => t.stop()); return; }
@@ -558,7 +563,9 @@ async function viewExt(rawCode) {
       ${last ? surveyBlock(last, true) : '<p class="muted">No checks recorded yet.</p>'}
     </section>
 
-    <a class="btn primary big block" href="${extHash(code, '/survey')}">Record survey</a>
+    ${hasPass(code)
+      ? `<a class="btn primary big block" href="${extHash(code, '/survey')}">Record survey</a>`
+      : `<a class="btn primary big block" href="#/scan">Scan QR label to record a survey</a>`}
 
     <section class="card">
       <h3>History <span class="muted">(${surveys.length})</span></h3>
@@ -615,13 +622,18 @@ function viewPick() {
   render(`
     <div class="alert warn">${res.matches.length} extinguishers share ID ${esc(res.code)}. Choose the one in front of you.</div>
     <ul class="list">
-      ${res.matches.map((e) => `<li><a class="row" href="${extHash(e.code)}">
+      ${res.matches.map((e) => `<li><button class="row" data-pick="${esc(e.code)}">
         <div class="row-main">
           <div class="row-title">${esc(e.unit ? `${e.unit} — ${e.location || ''}` : title(e))}</div>
           <div class="row-sub">${esc([e.code, e.type, e.capacity].filter(Boolean).join(' · '))}</div>
-        </div></a></li>`).join('')}
+        </div></button></li>`).join('')}
     </ul>
   `);
+  $$('[data-pick]').forEach((b) => b.addEventListener('click', () => {
+    pendingScan = null;
+    grantPass(b.dataset.pick);
+    go(extHash(b.dataset.pick, '/survey'), true);
+  }));
 }
 
 /* ---------------- location stamp ---------------- */
@@ -700,6 +712,16 @@ async function viewSurvey(rawCode) {
   const ext = await DB.getExt(code);
   if (!ext) return viewUnknown(code);
   setShell('Record survey', extHash(code));
+  if (!hasPass(code)) {
+    render(`
+      <section class="card center">
+        <p class="big-code mono">${esc(ext.tag || ext.code)}</p>
+        <p>To record a survey, scan this extinguisher's QR label with the camera.</p>
+        <a class="btn primary big block" href="#/scan">Scan QR label</a>
+      </section>
+    `);
+    return;
+  }
 
   render(`
     <section class="card compact">
@@ -775,6 +797,7 @@ async function viewSurvey(rawCode) {
       notes: $('#notes').value.trim(),
       ...place,
     });
+    scanPass = null; // one scan, one survey
     storageSet(OPERATOR_KEY, operator);
     if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
     toast(place.geo ? `Survey saved with location (±${place.geo.accuracy} m)` : 'Survey saved — no location available');
@@ -864,6 +887,7 @@ async function viewEditor(rawCode, prefill = '') {
       updatedAt: new Date().toISOString(),
     });
     pendingScan = null;
+    if (scanned) grantPass(newCode); // registered from a camera scan, so it can be surveyed now
     toast(editing ? 'Changes saved' : 'Extinguisher added');
     go(extHash(newCode), true);
   });

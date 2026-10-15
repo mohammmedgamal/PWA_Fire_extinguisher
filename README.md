@@ -5,7 +5,8 @@ It works offline and installs to the phone's home screen. There is no server and
 
 ## What it does
 
-- **Scan**: tap **Scan QR code** and point the camera at the extinguisher's label. A **Flashlight** button helps in dark areas, and the code can be typed in if the label is damaged.
+- **Scan**: tap **Scan QR code** and point the camera at the extinguisher's label. A **Flashlight** button helps in dark areas.
+  **Scanning the QR label is the only way to record a survey.** A scan unlocks one survey for that extinguisher for 15 minutes. Typing an ID, opening a link, choosing from the list or reloading the page does not unlock a survey. A damaged label has to be replaced before that extinguisher can be surveyed.
 - **See the extinguisher**:
   - its name, code, location, type and capacity
   - the date and time of the last check and who did it
@@ -20,7 +21,7 @@ It works offline and installs to the phone's home screen. There is no server and
   (latitude, longitude and accuracy in metres). The GPS starts when the survey form opens. If there is no fix yet, *Save* waits
   up to 10 seconds. If there is still no fix (weak signal indoors, or location permission denied), the survey is saved anyway,
   with the reason recorded. The position is shown in the history with a map link, and it is included in the CSV export.
-- **Home screen**: lists every extinguisher with its last result, shows how many are **Not OK** and how many are **Due**, and has search and filters.
+- **Home screen**: lists every extinguisher with its last result, shows how many are **Not OK** and how many are **Due**, and has search and filters. The list is for viewing only; extinguishers cannot be opened or surveyed from it.
 - **Adding extinguishers**: scanning a code the app doesn't know offers to register it, and the **+** button adds one by hand.
 - **QR labels**: the app can make a printable label (QR code plus name, code and location). The label can be shared, downloaded or printed.
 - **CSV export**: menu ⋮ → *Export surveys (CSV)*. The file opens in Excel (UTF-8 with BOM) or can be sent by email from the share sheet.
@@ -45,7 +46,6 @@ SIZE: 25 LBS
 Some ID numbers are used on more than one extinguisher, and 12 labels say `NO TAG`. Those get an app code with a suffix,
 such as `GPP1-01-069 #2` or `NO TAG #5`. The app picks the right one by matching the whole label (unit, location, type and size).
 If a label still matches more than one extinguisher, the app lists them so the operator can choose.
-Typing an ID number by hand works the same way.
 
 To update the register after the spreadsheet changes:
 
