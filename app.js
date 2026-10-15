@@ -559,10 +559,6 @@ async function viewExt(rawCode) {
     </section>
 
     <a class="btn primary big block" href="${extHash(code, '/survey')}">Record survey</a>
-    <div class="btn-row">
-      <a class="btn ghost" href="${extHash(code, '/label')}">QR label</a>
-      <a class="btn ghost" href="${extHash(code, '/edit')}">Edit</a>
-    </div>
 
     <section class="card">
       <h3>History <span class="muted">(${surveys.length})</span></h3>

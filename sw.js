@@ -1,5 +1,5 @@
 /* Service worker: caches the app shell so the app works offline in the plant. */
-const CACHE = 'fe-survey-v4';
+const CACHE = 'fe-survey-v5';
 const ASSETS = [
   './',
   'index.html',
